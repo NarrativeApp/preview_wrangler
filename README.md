@@ -1,5 +1,7 @@
 # Preview Wrangler
 
+A Python application that processes S3 inventory data to extract and download preview files from qualifying projects, with automatic image rotation correction.
+
 This project will produce a directory containing 20 jpeg preview files from each qualifying project. I will describe how to process the information we have in S3 to produce these
 
 1. Consult the latest S3 inventory data for base bucket prod.ml-meta-upload.getnarrativeapp.com in the location s3://prod.ml-meta-upload.getnarrativeapp.com-inventory/prod.ml-meta-upload.getnarrativeapp.com/Inventory/. This s3 prefix has a manifest directory per inventory, for example as of the writing of this document the most recent inventory is stored at s3://prod.ml-meta-upload.getnarrativeapp.com-inventory/prod.ml-meta-upload.getnarrativeapp.com/Inventory/2025-07-21T01-00Z/. Inside this directory is a manifest file called manifest.json with contents similar to the following example:
@@ -66,6 +68,19 @@ download all these zipped CSVs to a local named temporary directory so that they
 
 That's it!
 
+## Features
+
+- **S3 Inventory Processing**: Automatically finds and processes the latest S3 inventory data
+- **Smart Preview Detection**: Identifies preview directories with corresponding ML upload files
+- **Concurrent Downloads**: Downloads files in parallel for improved performance
+- **Image Rotation Correction**: Automatically detects and corrects misoriented images using deep learning
+  - Pre-trained ResNeXt50 model for accurate rotation detection
+  - Corrects 90°, 180°, and 270° rotations
+  - Processes images without EXIF rotation data
+  - Achieves ~52% correction rate on typical datasets
+- **Resumable Operations**: All operations are cached and can be resumed if interrupted
+- **Progress Tracking**: Real-time progress bars for all operations
+
 ## Installation
 
 1. Install uv if you haven't already:
@@ -107,6 +122,28 @@ Example:
 ```bash
 uv run python src/main.py download -o /path/to/output --debug
 ```
+
+### Image Rotation Correction
+
+After downloading images, you can automatically detect and correct image rotations:
+
+```bash
+# Correct rotations in the default output directory
+uv run python src/main.py correct-rotations
+
+# Correct rotations in a specific directory
+uv run python src/main.py correct-rotations --input-dir /path/to/images
+
+# Force re-process all images (ignore cache)
+uv run python src/main.py correct-rotations --overwrite
+```
+
+The rotation correction feature:
+- Uses a pre-trained ResNeXt50 model to detect image orientations
+- Corrects images rotated by 90°, 180°, or 270°
+- Processes only JPEG files without EXIF rotation data
+- Caches results to avoid reprocessing
+- Applies corrections in-place to the downloaded files
 
 ### Additional Commands
 
