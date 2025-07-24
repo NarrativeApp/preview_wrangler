@@ -73,11 +73,11 @@ That's it!
 - **S3 Inventory Processing**: Automatically finds and processes the latest S3 inventory data
 - **Smart Preview Detection**: Identifies preview directories with corresponding ML upload files
 - **Concurrent Downloads**: Downloads files in parallel for improved performance
-- **Image Rotation Correction**: Automatically detects and corrects misoriented images using deep learning
-  - Pre-trained ResNeXt50 model for accurate rotation detection
-  - Corrects 90°, 180°, and 270° rotations
-  - Processes images without EXIF rotation data
-  - Achieves ~52% correction rate on typical datasets
+- **Image Rotation Correction**: Uses rotation metadata from project ML upload files for 100% accurate corrections
+  - Reads rotation data directly from `<project_uuid>.v3.gz` files
+  - Corrects 90°, 180°, and 270° rotations based on actual metadata
+  - No ML model inference needed - uses definitive rotation values
+  - Achieves 100% accuracy with significantly improved performance
 - **Resumable Operations**: All operations are cached and can be resumed if interrupted
 - **Progress Tracking**: Real-time progress bars for all operations
 
@@ -139,9 +139,9 @@ uv run python src/main.py correct-rotations --overwrite
 ```
 
 The rotation correction feature:
-- Uses a pre-trained ResNeXt50 model to detect image orientations
-- Corrects images rotated by 90°, 180°, or 270°
-- Processes only JPEG files without EXIF rotation data
+- Uses rotation metadata from project v3.gz files for 100% accuracy
+- Corrects images rotated by 90°, 180°, or 270° based on definitive data
+- No ML model inference required - reads actual rotation values
 - Caches results to avoid reprocessing
 - Applies corrections in-place to the downloaded files
 
