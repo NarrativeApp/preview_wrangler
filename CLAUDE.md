@@ -31,21 +31,13 @@ uv run ruff format .
 
 ## Rotation Correction
 
-The project includes an image rotation correction feature that automatically detects and corrects misoriented images:
+The project includes an image rotation correction feature that uses rotation data from project ML upload files:
 
-- **Model**: Uses the `check-orientation` package with a pre-trained ResNeXt50 model (`swsl_resnext50_32x4d`)
-- **Detection**: Identifies images rotated at 90°, 180°, or 270° angles
-- **Processing**: Applies in-place corrections to JPEG files without EXIF rotation data
+- **Data Source**: Uses rotation metadata from `<project_uuid>.v3.gz` files
+- **Accuracy**: 100% accurate rotation detection (no ML model inference needed)
+- **Processing**: Applies corrections based on rotation values: `CW90`, `CW180`, `CW270`, or `None`
 - **Caching**: Tracks processed images to enable resumable operations
-- **Performance**: Processes ~2-5 images per second depending on hardware
-
-### Results from Latest Run
-- Total images processed: 2,644
-- Images corrected: 1,369 (51.8%)
-  - 90° rotations: 148
-  - 180° rotations: 200
-  - 270° rotations: 1,021
-- Images already correct: 1,275 (48.2%)
+- **Performance**: Much faster than ML model approach, limited only by image I/O
 
 ## Architecture
 
