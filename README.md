@@ -90,12 +90,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 2. Install dependencies:
 ```bash
-uv pip install -r requirements.txt
-```
+# For runtime dependencies only
+uv sync
 
-3. For development, install dev dependencies:
-```bash
-uv pip install -r requirements-dev.txt
+# For development (includes all dev tools)
+uv sync --extra dev
 ```
 
 ## Usage

@@ -10,7 +10,7 @@ Preview Wrangler is a Python application that processes S3 inventory data to ext
 
 ```bash
 # Install dependencies with uv
-uv pip install -r requirements.txt
+uv sync
 
 # Run the application
 uv run python src/main.py download

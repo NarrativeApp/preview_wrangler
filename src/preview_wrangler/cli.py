@@ -12,8 +12,8 @@ from .csv_downloader import CSVDownloader
 from .csv_parser_fast import FastCSVParser
 from .file_downloader import FileDownloader
 from .inventory import InventoryManager
-from .s3_client import S3Client
 from .rotation_corrector_v3 import correct_rotations_v3
+from .s3_client import S3Client
 
 # Load environment variables
 load_dotenv()
