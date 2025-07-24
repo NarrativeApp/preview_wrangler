@@ -224,7 +224,7 @@ class V3RotationCorrector:
         logger.info(f"Found {len(project_dirs)} project directories")
 
         # Process each project
-        total_stats = {
+        total_stats: dict[str, Any] = {
             "total_projects": len(project_dirs),
             "total_images": 0,
             "corrected": 0,
@@ -303,7 +303,7 @@ class V3RotationCorrector:
             }
 
         # Find and process images
-        stats = {
+        stats: dict[str, Any] = {
             "total_images": 0,
             "corrected": 0,
             "skipped": 0,
