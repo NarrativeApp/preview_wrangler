@@ -10,15 +10,18 @@ Preview Wrangler is a Python application that processes S3 inventory data to ext
 
 ```bash
 # Install dependencies with uv
-uv pip install -r requirements.txt
+uv sync
 
 # Run the application
 uv run python src/main.py download
 
+# Run with custom project concurrency (default: 4)
+uv run python src/main.py download --max-projects 8
+
 # Correct image rotations (after download)
 uv run python src/main.py correct-rotations
 
-# Force re-process all images (ignore cache)
+# Force re-process all images (overwrite existing)
 uv run python src/main.py correct-rotations --overwrite
 
 # Run tests
@@ -31,21 +34,19 @@ uv run ruff format .
 
 ## Rotation Correction
 
-The project includes an image rotation correction feature that automatically detects and corrects misoriented images:
+The project includes an image rotation correction feature that uses rotation data from project ML upload files:
 
-- **Model**: Uses the `check-orientation` package with a pre-trained ResNeXt50 model (`swsl_resnext50_32x4d`)
-- **Detection**: Identifies images rotated at 90°, 180°, or 270° angles
-- **Processing**: Applies in-place corrections to JPEG files without EXIF rotation data
-- **Caching**: Tracks processed images to enable resumable operations
-- **Performance**: Processes ~2-5 images per second depending on hardware
+- **Data Source**: Uses rotation metadata from `<project_uuid>.v3.gz` files
+- **Accuracy**: 100% accurate rotation detection (no ML model inference needed)
+- **Processing**: Applies corrections based on rotation values: `CW90`, `CW180`, `CW270`, or `None`
+- **Performance**: Fast processing, limited only by image I/O
 
-### Results from Latest Run
-- Total images processed: 2,644
-- Images corrected: 1,369 (51.8%)
-  - 90° rotations: 148
-  - 180° rotations: 200
-  - 270° rotations: 1,021
-- Images already correct: 1,275 (48.2%)
+## Performance & Parallelization
+
+### Download Parallelization
+- **Project Level**: Up to 4 projects processed concurrently (configurable with `--max-projects`)
+- **File Level**: Within each project, up to 20 JPEG files downloaded concurrently
+- **CSV Caching**: CSV inventory files are cached locally for resumability
 
 ## Architecture
 
@@ -57,7 +58,7 @@ The project includes an image rotation correction feature that automatically det
 1. **Inventory Discovery**: Find latest inventory in `s3://prod.ml-meta-upload.getnarrativeapp.com-inventory/prod.ml-meta-upload.getnarrativeapp.com/Inventory/`
 2. **CSV Download**: Download gzipped CSV files listed in manifest.json to local cache
 3. **Preview Identification**: Find `<user_uuid>/<project_uuid>/preview.v1` directories with matching `<user_uuid>/<project_uuid>/<project_uuid>.v3.gz` files
-4. **File Download**: Download 20 JPEGs per project into `<project_uuid>/` directories along with ML upload files
+4. **File Download**: Download 20 JPEGs per project into `<project_uuid>/` directories along with ML upload files (supports parallel project processing)
 
 ### Key Patterns
 - Preview directories: `<user_uuid>/<project_uuid>/preview.v1`
