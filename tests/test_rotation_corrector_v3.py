@@ -62,19 +62,6 @@ class TestV3RotationCorrector:
             not_found = corrector._get_image_path(project_dir, "non-existent")
             assert not_found is None
 
-    def test_get_cache_key(self):
-        """Test cache key generation."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            corrector = V3RotationCorrector(Path(temp_dir))
-
-            test_file = Path(temp_dir) / "test.jpg"
-            test_file.write_text("test content")
-
-            cache_key = corrector._get_cache_key(test_file)
-
-            assert cache_key.startswith("v3_rotation_")
-            assert "test.jpg" in cache_key
-
     @patch("preview_wrangler.rotation_corrector_v3.Image")
     def test_apply_rotation_no_rotation(self, mock_image):
         """Test applying rotation when no rotation is needed."""

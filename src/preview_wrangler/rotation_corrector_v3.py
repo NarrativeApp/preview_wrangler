@@ -33,30 +33,6 @@ class V3RotationCorrector:
         self.output_dir = Path(output_dir) if output_dir else None
         self.overwrite = overwrite
 
-        # Cache for tracking processed images
-        cache_dir = Path.home() / ".preview_wrangler" / "rotation_cache_v3"
-        self.cache_dir = cache_dir
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.processed_cache_file = self.cache_dir / "processed_images.json"
-        self._load_processed_cache()
-
-    def _load_processed_cache(self):
-        """Load cache of processed images."""
-        if self.processed_cache_file.exists():
-            with open(self.processed_cache_file) as f:
-                self.processed_cache = json.load(f)
-        else:
-            self.processed_cache = {}
-
-    def _save_processed_cache(self):
-        """Save cache of processed images."""
-        with open(self.processed_cache_file, "w") as f:
-            json.dump(self.processed_cache, f, indent=2)
-
-    def _get_cache_key(self, image_path: Path) -> str:
-        """Generate cache key for an image."""
-        return f"v3_rotation_{image_path.stat().st_mtime}_{image_path.stat().st_size}_{image_path.name}"
-
     def _parse_v3_file(self, v3_path: Path) -> dict[str, str]:
         """
         Parse a v3.gz file to extract rotation data for images.
@@ -97,12 +73,19 @@ class V3RotationCorrector:
         """
         if rotation is None or rotation == "None":
             return 0
-        elif rotation == "CW90":
-            return 270  # PIL rotates counter-clockwise, so CW90 = CCW270
-        elif rotation == "CW180":
-            return 180
-        elif rotation == "CW270":
-            return 90  # CW270 = CCW90
+        
+        # Map rotation values to degrees (PIL rotates counter-clockwise)  
+        rotation_map = {
+            "CW90": 270,   # Clockwise 90 = Counter-clockwise 270
+            "CW180": 180,  # Clockwise 180 = Counter-clockwise 180
+            "CW270": 90,   # Clockwise 270 = Counter-clockwise 90
+            "CCW90": 90,   # Counter-clockwise 90
+            "CCW180": 180, # Counter-clockwise 180
+            "CCW270": 270  # Counter-clockwise 270
+        }
+        
+        if rotation in rotation_map:
+            return rotation_map[rotation]
         else:
             logger.warning(f"Unknown rotation value: {rotation}")
             return 0
@@ -160,16 +143,10 @@ class V3RotationCorrector:
                     img = img.convert("RGB")
 
                 # Apply rotation
-                rotated = img.rotate(-degrees, expand=True)  # PIL uses counter-clockwise
+                rotated = img.rotate(degrees, expand=True)
 
                 # Save with original quality if possible
-                save_kwargs = {}
-                if hasattr(img, "info") and "quality" in img.info:
-                    save_kwargs["quality"] = img.info["quality"]
-                else:
-                    save_kwargs["quality"] = 95  # High quality default
-
-                rotated.save(output_path, **save_kwargs)
+                rotated.save(output_path, quality=95, optimize=True)
 
             logger.debug(f"Rotated {input_path.name} by {degrees}° -> {output_path}")
             return True
@@ -250,9 +227,6 @@ class V3RotationCorrector:
                 logger.error(f"Error processing project {project_dir.name}: {e}")
                 total_stats["errors"] += 1
 
-        # Save cache after processing
-        self._save_processed_cache()
-
         # Log summary
         logger.info("\nRotation Correction Summary:")
         logger.info(f"  Total projects: {total_stats['total_projects']}")
@@ -320,19 +294,6 @@ class V3RotationCorrector:
 
             stats["total_images"] += 1
 
-            # Check cache if not overwriting
-            if not self.overwrite:
-                cache_key = self._get_cache_key(jpeg_path)
-                if cache_key in self.processed_cache:
-                    logger.debug(f"Skipping already processed: {jpeg_path.name}")
-                    cached_angle = self.processed_cache[cache_key].get("angle", 0)
-                    stats["corrections_by_angle"][cached_angle] += 1
-                    if cached_angle == 0:
-                        stats["skipped"] += 1
-                    else:
-                        stats["corrected"] += 1
-                    continue
-
             try:
                 # Convert rotation to degrees
                 degrees = self._rotation_to_degrees(rotation)
@@ -349,14 +310,6 @@ class V3RotationCorrector:
                     stats["corrected"] += 1
                 else:
                     stats["skipped"] += 1
-
-                # Cache the result
-                cache_key = self._get_cache_key(jpeg_path)
-                self.processed_cache[cache_key] = {
-                    "angle": degrees,
-                    "output_path": str(output_path),
-                    "rotation_value": str(rotation),
-                }
 
             except Exception as e:
                 logger.error(f"Error processing {jpeg_path}: {e}")

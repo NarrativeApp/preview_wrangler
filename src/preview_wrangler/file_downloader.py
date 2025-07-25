@@ -20,9 +20,14 @@ class FileDownloader:
     BASE_BUCKET = "prod.ml-meta-upload.getnarrativeapp.com"
     JPEG_LIMIT = 20
     MAX_WORKERS = 20  # Concurrent downloads per project
+    MAX_PROJECT_WORKERS = 4  # Concurrent projects
 
     def __init__(
-        self, s3_client: S3Client, cache_manager: CacheManager, output_dir: Optional[Path] = None
+        self,
+        s3_client: S3Client,
+        cache_manager: CacheManager,
+        output_dir: Optional[Path] = None,
+        max_project_workers: int = 4,
     ):
         """Initialize file downloader.
 
@@ -30,11 +35,13 @@ class FileDownloader:
             s3_client: S3 client instance
             cache_manager: Cache manager instance
             output_dir: Output directory for downloads
+            max_project_workers: Maximum concurrent projects to process
         """
         self.s3_client = s3_client
         self.cache_manager = cache_manager
         self.output_dir = output_dir or Path.cwd() / "output"
         self.output_dir.mkdir(exist_ok=True)
+        self.max_project_workers = max_project_workers
 
     def download_preview_files(self, preview_dirs: list[PreviewDirectory]):
         """Download files for all preview directories.
@@ -42,31 +49,28 @@ class FileDownloader:
         Args:
             preview_dirs: List of preview directories to process
         """
-        # Load progress
-        progress = self.cache_manager.load_progress("preview_downloads") or {"completed": []}
-        completed = set(progress["completed"])
-
         logger.info(
-            f"Processing {len(preview_dirs)} preview directories "
-            f"({len(completed)} already completed)"
+            f"Processing {len(preview_dirs)} preview directories with {self.max_project_workers} concurrent projects"
         )
 
-        for preview in tqdm(preview_dirs, desc="Downloading preview files"):
-            if preview.project_uuid in completed:
-                logger.debug(f"Skipping completed project {preview.project_uuid}")
-                continue
+        with ThreadPoolExecutor(max_workers=self.max_project_workers) as executor:
+            # Submit all project download tasks
+            future_to_preview = {
+                executor.submit(self._download_project_files, preview): preview
+                for preview in preview_dirs
+            }
 
-            try:
-                self._download_project_files(preview)
-
-                # Update progress
-                completed.add(preview.project_uuid)
-                progress["completed"] = list(completed)
-                self.cache_manager.save_progress("preview_downloads", progress)
-
-            except Exception as e:
-                logger.error(f"Error processing project {preview.project_uuid}: {e}")
-                continue
+            # Use tqdm to track progress
+            with tqdm(total=len(preview_dirs), desc="Downloading preview files") as pbar:
+                for future in as_completed(future_to_preview):
+                    preview = future_to_preview[future]
+                    try:
+                        future.result()
+                        pbar.set_postfix({"current": preview.project_uuid[:8]})
+                    except Exception as e:
+                        logger.error(f"Error processing project {preview.project_uuid}: {e}")
+                    finally:
+                        pbar.update(1)
 
     def _download_project_files(self, preview: PreviewDirectory):
         """Download files for a single project.

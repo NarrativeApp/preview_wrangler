@@ -25,6 +25,9 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+# Suppress urllib3 connection pool warnings
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,8 +59,19 @@ def cli(ctx, debug):
     help="Output directory for downloaded files",
 )
 @click.option("--clear-cache", is_flag=True, help="Clear all cached files before starting")
+@click.option(
+    "--max-projects",
+    type=int,
+    default=4,
+    help="Maximum number of projects to download concurrently",
+)
+@click.option(
+    "--limit",
+    type=int,
+    help="Limit the total number of projects to download",
+)
 @click.pass_context
-def download(ctx, output_dir, clear_cache):
+def download(ctx, output_dir, clear_cache, max_projects, limit):
     """Download preview files from S3 inventory."""
     cache_manager = ctx.obj["cache_manager"]
     s3_client = ctx.obj["s3_client"]
@@ -89,9 +103,14 @@ def download(ctx, output_dir, clear_cache):
 
         click.echo(f"Found {len(preview_dirs)} preview directories with ML upload files")
 
+        # Apply limit if specified
+        if limit and limit > 0 and limit < len(preview_dirs):
+            preview_dirs = preview_dirs[:limit]
+            click.echo(f"Limited to first {limit} projects")
+
         # Step 4: Download preview files
         click.echo(f"\nDownloading preview files to {output_dir}...")
-        file_downloader = FileDownloader(s3_client, cache_manager, output_dir)
+        file_downloader = FileDownloader(s3_client, cache_manager, output_dir, max_projects)
         file_downloader.download_preview_files(preview_dirs)
 
         click.echo("\nDownload complete!")
