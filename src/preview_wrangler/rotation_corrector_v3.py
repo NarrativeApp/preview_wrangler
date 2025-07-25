@@ -73,17 +73,17 @@ class V3RotationCorrector:
         """
         if rotation is None or rotation == "None":
             return 0
-        
-        # Map rotation values to degrees (PIL rotates counter-clockwise)  
+
+        # Map rotation values to degrees (PIL rotates counter-clockwise)
         rotation_map = {
-            "CW90": 270,   # Clockwise 90 = Counter-clockwise 270
+            "CW90": 270,  # Clockwise 90 = Counter-clockwise 270
             "CW180": 180,  # Clockwise 180 = Counter-clockwise 180
-            "CW270": 90,   # Clockwise 270 = Counter-clockwise 90
-            "CCW90": 90,   # Counter-clockwise 90
-            "CCW180": 180, # Counter-clockwise 180
-            "CCW270": 270  # Counter-clockwise 270
+            "CW270": 90,  # Clockwise 270 = Counter-clockwise 90
+            "CCW90": 90,  # Counter-clockwise 90
+            "CCW180": 180,  # Counter-clockwise 180
+            "CCW270": 270,  # Counter-clockwise 270
         }
-        
+
         if rotation in rotation_map:
             return rotation_map[rotation]
         else:
