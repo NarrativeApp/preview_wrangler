@@ -107,7 +107,7 @@ class MarkerScanner:
 
         return projects
 
-    def get_project_files(self, user_id: str, project_id: str) -> dict:
+    def get_project_files(self, user_id: str, project_id: str) -> dict[str, str | list[str]]:
         """
         Get the actual data files for a project.
 
@@ -118,7 +118,7 @@ class MarkerScanner:
         Returns:
             Dictionary with 'ml_file' and 'preview_files' keys
         """
-        result = {
+        result: dict[str, str | list[str]] = {
             "ml_file": f"{user_id}/{project_id}/{project_id}.v3.gz",
             "preview_files": [],
         }
@@ -136,7 +136,9 @@ class MarkerScanner:
                         key = obj["Key"]
                         # Only include JPEG files
                         if key.lower().endswith(".jpg"):
-                            result["preview_files"].append(key)
+                            preview_files = result["preview_files"]
+                            assert isinstance(preview_files, list)
+                            preview_files.append(key)
 
         except Exception as e:
             logger.error(f"Error listing preview files for {user_id}/{project_id}: {e}")

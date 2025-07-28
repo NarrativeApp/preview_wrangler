@@ -10,7 +10,7 @@ for project_dir in output/*/; do
     if [ -d "$project_dir" ]; then
         project_name=$(basename "$project_dir")
         echo "=== Project: $project_name ==="
-        
+
         # Display all JPEGs in this project
         for img in "$project_dir"*.jpg; do
             if [ -f "$img" ]; then
