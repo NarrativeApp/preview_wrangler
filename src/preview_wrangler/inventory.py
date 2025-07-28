@@ -62,14 +62,18 @@ class InventoryManager:
         try:
             # List all inventory directories
             self.s3_client.list_objects(
-                bucket=self.INVENTORY_BUCKET, prefix=self.INVENTORY_PREFIX, delimiter="/"
+                bucket=self.INVENTORY_BUCKET,
+                prefix=self.INVENTORY_PREFIX,
+                delimiter="/",
             )
 
             # Extract directory names (CommonPrefixes)
             prefixes = []
             paginator = self.s3_client.s3.get_paginator("list_objects_v2")
             pages = paginator.paginate(
-                Bucket=self.INVENTORY_BUCKET, Prefix=self.INVENTORY_PREFIX, Delimiter="/"
+                Bucket=self.INVENTORY_BUCKET,
+                Prefix=self.INVENTORY_PREFIX,
+                Delimiter="/",
             )
 
             for page in pages:

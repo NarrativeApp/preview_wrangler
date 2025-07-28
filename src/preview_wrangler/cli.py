@@ -6,12 +6,12 @@ from pathlib import Path
 
 import click
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 from .cache import CacheManager
-from .csv_downloader import CSVDownloader
-from .csv_parser_fast import FastCSVParser
+from .csv_parser import PreviewDirectory
 from .file_downloader import FileDownloader
-from .inventory import InventoryManager
+from .marker_scanner import MarkerScanner
 from .rotation_corrector_v3 import correct_rotations_v3
 from .s3_client import S3Client
 
@@ -58,7 +58,12 @@ def cli(ctx, debug):
     default="output",
     help="Output directory for downloaded files",
 )
-@click.option("--clear-cache", is_flag=True, help="Clear all cached files before starting")
+@click.option(
+    "--hours-back",
+    type=int,
+    default=24,
+    help="Number of hours to look back for new projects",
+)
 @click.option(
     "--max-projects",
     type=int,
@@ -71,44 +76,47 @@ def cli(ctx, debug):
     help="Limit the total number of projects to download",
 )
 @click.pass_context
-def download(ctx, output_dir, clear_cache, max_projects, limit):
-    """Download preview files from S3 inventory."""
+def download(ctx, output_dir, hours_back, max_projects, limit):
+    """Download preview files using marker files."""
     cache_manager = ctx.obj["cache_manager"]
     s3_client = ctx.obj["s3_client"]
 
-    if clear_cache:
-        click.confirm("Clear all cached files?", abort=True)
-        cache_manager.clear_cache()
-
     try:
-        # Step 1: Get latest inventory manifest
-        click.echo("Finding latest inventory...")
-        inventory_manager = InventoryManager(s3_client)
-        manifest = inventory_manager.get_latest_manifest()
-        click.echo(f"Found inventory from {manifest.creation_date}")
+        # Step 1: Scan for projects with marker files
+        click.echo(f"Scanning for projects from the last {hours_back} hours...")
+        scanner = MarkerScanner(s3_client)
+        projects = scanner.scan_for_projects(hours_back=hours_back)
 
-        # Step 2: Download CSV files
-        click.echo(f"\nDownloading {len(manifest.files)} CSV files...")
-        csv_downloader = CSVDownloader(s3_client, cache_manager)
-        csv_paths = csv_downloader.download_csv_files(manifest)
-
-        # Step 3: Parse CSV files
-        click.echo("\nParsing CSV files for preview directories...")
-        parser = FastCSVParser()
-        preview_dirs = parser.parse_csv_files(csv_paths)
-
-        if not preview_dirs:
-            click.echo("No qualifying preview directories found.")
+        if not projects:
+            click.echo("No qualifying projects found.")
             return
 
-        click.echo(f"Found {len(preview_dirs)} preview directories with ML upload files")
+        click.echo(f"Found {len(projects)} projects with both preview.v1 and v3.gz data")
 
         # Apply limit if specified
-        if limit and limit > 0 and limit < len(preview_dirs):
-            preview_dirs = preview_dirs[:limit]
+        if limit and limit > 0 and limit < len(projects):
+            projects = projects[:limit]
             click.echo(f"Limited to first {limit} projects")
 
-        # Step 4: Download preview files
+        # Step 2: Convert to preview directory format expected by FileDownloader
+        click.echo("Converting to preview directory format...")
+        preview_dirs = []
+        with tqdm(total=len(projects), desc="Preparing projects") as pbar:
+            for user_id, project_id in projects:
+                # Skip the expensive get_project_files call - we know the structure
+                preview_dirs.append(
+                    PreviewDirectory(
+                        user_uuid=user_id,
+                        project_uuid=project_id,
+                        preview_path=f"{user_id}/{project_id}/preview.v1/",
+                        ml_upload_path=f"{user_id}/{project_id}/{project_id}.v3.gz",
+                    )
+                )
+                pbar.update(1)
+
+        click.echo(f"Created {len(preview_dirs)} preview directory objects")
+
+        # Step 3: Download preview files
         click.echo(f"\nDownloading preview files to {output_dir}...")
         file_downloader = FileDownloader(s3_client, cache_manager, output_dir, max_projects)
         file_downloader.download_preview_files(preview_dirs)
@@ -116,7 +124,7 @@ def download(ctx, output_dir, clear_cache, max_projects, limit):
         click.echo("\nDownload complete!")
 
     except Exception as e:
-        logger.exception("Error during download")
+        logger.exception("Error during marker-based download")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
