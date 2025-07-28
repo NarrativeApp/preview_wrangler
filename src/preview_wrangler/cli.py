@@ -80,47 +80,49 @@ def download(ctx, output_dir, hours_back, max_projects, limit):
     """Download preview files using marker files."""
     cache_manager = ctx.obj["cache_manager"]
     s3_client = ctx.obj["s3_client"]
-    
+
     try:
         # Step 1: Scan for projects with marker files
         click.echo(f"Scanning for projects from the last {hours_back} hours...")
         scanner = MarkerScanner(s3_client)
         projects = scanner.scan_for_projects(hours_back=hours_back)
-        
+
         if not projects:
             click.echo("No qualifying projects found.")
             return
-            
+
         click.echo(f"Found {len(projects)} projects with both preview.v1 and v3.gz data")
-        
+
         # Apply limit if specified
         if limit and limit > 0 and limit < len(projects):
             projects = projects[:limit]
             click.echo(f"Limited to first {limit} projects")
-        
+
         # Step 2: Convert to preview directory format expected by FileDownloader
         click.echo("Converting to preview directory format...")
         preview_dirs = []
         with tqdm(total=len(projects), desc="Preparing projects") as pbar:
             for user_id, project_id in projects:
                 # Skip the expensive get_project_files call - we know the structure
-                preview_dirs.append(PreviewDirectory(
-                    user_uuid=user_id,
-                    project_uuid=project_id,
-                    preview_path=f"{user_id}/{project_id}/preview.v1/",
-                    ml_upload_path=f"{user_id}/{project_id}/{project_id}.v3.gz"
-                ))
+                preview_dirs.append(
+                    PreviewDirectory(
+                        user_uuid=user_id,
+                        project_uuid=project_id,
+                        preview_path=f"{user_id}/{project_id}/preview.v1/",
+                        ml_upload_path=f"{user_id}/{project_id}/{project_id}.v3.gz",
+                    )
+                )
                 pbar.update(1)
-        
+
         click.echo(f"Created {len(preview_dirs)} preview directory objects")
-        
+
         # Step 3: Download preview files
         click.echo(f"\nDownloading preview files to {output_dir}...")
         file_downloader = FileDownloader(s3_client, cache_manager, output_dir, max_projects)
         file_downloader.download_preview_files(preview_dirs)
-        
+
         click.echo("\nDownload complete!")
-        
+
     except Exception as e:
         logger.exception("Error during marker-based download")
         click.echo(f"Error: {e}", err=True)

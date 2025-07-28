@@ -20,7 +20,12 @@ logger = logging.getLogger(__name__)
 class V3RotationCorrector:
     """Corrects image rotations using data from v3.gz ML upload files."""
 
-    def __init__(self, input_dir: Path, output_dir: Optional[Path] = None, overwrite: bool = False):
+    def __init__(
+        self,
+        input_dir: Path,
+        output_dir: Optional[Path] = None,
+        overwrite: bool = False,
+    ):
         """
         Initialize the rotation corrector.
 
