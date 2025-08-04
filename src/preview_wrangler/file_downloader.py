@@ -28,6 +28,7 @@ class FileDownloader:
         cache_manager: CacheManager,
         output_dir: Optional[Path] = None,
         max_project_workers: int = 4,
+        max_images: Optional[int] = None,
     ):
         """Initialize file downloader.
 
@@ -36,12 +37,15 @@ class FileDownloader:
             cache_manager: Cache manager instance
             output_dir: Output directory for downloads
             max_project_workers: Maximum concurrent projects to process
+            max_images: Maximum images to download per project (None = all)
         """
         self.s3_client = s3_client
         self.cache_manager = cache_manager
         self.output_dir = output_dir or Path.cwd() / "output"
         self.output_dir.mkdir(exist_ok=True)
         self.max_project_workers = max_project_workers
+        self.max_images = max_images
+        logger.debug(f"FileDownloader initialized with max_images={max_images}")
 
     def download_preview_files(self, preview_dirs: list[PreviewDirectory]):
         """Download files for all preview directories.
@@ -127,8 +131,19 @@ class FileDownloader:
             logger.warning(f"No JPEG files found in {preview.preview_path}")
             return
 
-        # Limit to 20 files
-        jpeg_files = jpeg_files[: self.JPEG_LIMIT]
+        # Apply image limit (use max_images if set and > 0, otherwise default JPEG_LIMIT)
+        if self.max_images is not None and self.max_images > 0:
+            limit = self.max_images
+            logger.debug(f"Using custom image limit: {limit}")
+        elif self.max_images is None:
+            limit = self.JPEG_LIMIT
+            logger.debug(f"Using default image limit: {limit}")
+        else:
+            # max_images is 0 or negative, download all
+            limit = len(jpeg_files)
+            logger.debug(f"No image limit, downloading all {limit} images")
+
+        jpeg_files = jpeg_files[:limit]
 
         logger.info(f"Downloading {len(jpeg_files)} JPEG files for project {preview.project_uuid}")
 
