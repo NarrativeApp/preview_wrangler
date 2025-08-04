@@ -336,7 +336,7 @@ class V3RotationCorrector:
             Statistics for this image
         """
         image_id, rotation, jpeg_path = task
-        result = {
+        result: dict[str, Any] = {
             "corrected": 0,
             "skipped": 0,
             "errors": 0,
