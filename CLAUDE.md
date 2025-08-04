@@ -21,11 +21,29 @@ uv run python src/main.py download --max-projects 8
 # Look back more hours for marker files (default: 24)
 uv run python src/main.py download --hours-back 48
 
+# Limit images per project (default: 20)
+uv run python src/main.py download --max-images 5
+
+# Download all images per project (no limit)
+uv run python src/main.py download --max-images 0
+
 # Correct image rotations (after download)
 uv run python src/main.py correct-rotations
 
 # Force re-process all images (overwrite existing)
 uv run python src/main.py correct-rotations --overwrite
+
+# Sort/rename images by capture time (after download)
+uv run python src/main.py capture-time-sort
+
+# Sort with custom input directory
+uv run python src/main.py capture-time-sort --input-dir my_projects
+
+# Sort to output directory (copy files)
+uv run python src/main.py capture-time-sort --output-dir sorted_images
+
+# Force overwrite existing renamed images
+uv run python src/main.py capture-time-sort --overwrite
 
 # Run tests
 uv run pytest
@@ -43,6 +61,16 @@ The project includes an image rotation correction feature that uses rotation dat
 - **Accuracy**: 100% accurate rotation detection (no ML model inference needed)
 - **Processing**: Applies corrections based on rotation values: `CW90`, `CW180`, `CW270`, or `None`
 - **Performance**: Fast processing, limited only by image I/O
+
+## Capture Time Sorting
+
+The project includes a capture time sorting feature that organizes images by renaming them with structured filenames:
+
+- **Data Source**: Uses capture time, camera model, and serial number from `<project_uuid>.v3.gz` files
+- **Filename Pattern**: `<model>_<camera_serial>_<capture_time>_<image_uuid>.jpg`
+- **Example**: `EOS_R6_182027002738_20250712_023256_9e8161ff-abb8-4332-bb8d-096ef9d37c68.jpg`
+- **Collision Avoidance**: Uses image UUID to ensure filename uniqueness
+- **Processing**: Sanitizes camera model names and formats timestamps for filesystem compatibility
 
 ## Performance & Parallelization
 

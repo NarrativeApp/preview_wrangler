@@ -8,6 +8,7 @@ rotation data from the project ML upload files.
 import gzip
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
 
@@ -25,6 +26,7 @@ class V3RotationCorrector:
         input_dir: Path,
         output_dir: Optional[Path] = None,
         overwrite: bool = False,
+        max_workers: int = 4,
     ):
         """
         Initialize the rotation corrector.
@@ -33,10 +35,12 @@ class V3RotationCorrector:
             input_dir: Directory containing project directories with images and v3.gz files
             output_dir: Directory to save corrected images (None = in-place)
             overwrite: Whether to overwrite existing corrected images
+            max_workers: Number of worker threads for parallel processing
         """
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir) if output_dir else None
         self.overwrite = overwrite
+        self.max_workers = max_workers
 
     def _parse_v3_file(self, v3_path: Path) -> dict[str, str]:
         """
@@ -143,8 +147,8 @@ class V3RotationCorrector:
 
             # Open and rotate image
             with Image.open(input_path) as img:
-                # Convert to RGB if necessary (for JPEG output)
-                if img.mode not in ("RGB", "L"):
+                # Only convert to RGB if not already RGB/RGBA/L
+                if img.mode not in ("RGB", "RGBA", "L"):
                     img = img.convert("RGB")
 
                 # Apply rotation
@@ -189,7 +193,8 @@ class V3RotationCorrector:
         project_dirs = []
         for item in self.input_dir.iterdir():
             if item.is_dir():
-                v3_files = list(item.glob("*.v3.gz"))
+                # Filter out macOS metadata files (._*) and get only real v3.gz files
+                v3_files = [f for f in item.glob("*.v3.gz") if not f.name.startswith("._")]
                 if v3_files:
                     project_dirs.append(item)
 
@@ -256,8 +261,8 @@ class V3RotationCorrector:
         Returns:
             Statistics for this project
         """
-        # Find the v3.gz file
-        v3_files = list(project_dir.glob("*.v3.gz"))
+        # Find the v3.gz file (exclude macOS metadata files)
+        v3_files = [f for f in project_dir.glob("*.v3.gz") if not f.name.startswith("._")]
         if not v3_files:
             return {
                 "total_images": 0,
@@ -281,46 +286,85 @@ class V3RotationCorrector:
                 "corrections_by_angle": {0: 0, 90: 0, 180: 0, 270: 0},
             }
 
-        # Find and process images
+        # Find valid images
+        image_tasks = []
+        for image_id, rotation in rotation_data.items():
+            jpeg_path = self._get_image_path(project_dir, image_id)
+            if jpeg_path:
+                image_tasks.append((image_id, rotation, jpeg_path))
+
+        if not image_tasks:
+            return {
+                "total_images": 0,
+                "corrected": 0,
+                "skipped": 0,
+                "errors": 0,
+                "corrections_by_angle": {0: 0, 90: 0, 180: 0, 270: 0},
+            }
+
+        # Process images in parallel
         stats: dict[str, Any] = {
-            "total_images": 0,
+            "total_images": len(image_tasks),
             "corrected": 0,
             "skipped": 0,
             "errors": 0,
             "corrections_by_angle": {0: 0, 90: 0, 180: 0, 270: 0},
         }
 
-        for image_id, rotation in rotation_data.items():
-            # Get the corresponding JPEG file path
-            jpeg_path = self._get_image_path(project_dir, image_id)
-            if not jpeg_path:
-                logger.debug(f"JPEG not found for image ID {image_id}")
-                continue
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            results = list(executor.map(self._process_image_task, image_tasks))
 
-            stats["total_images"] += 1
-
-            try:
-                # Convert rotation to degrees
-                degrees = self._rotation_to_degrees(rotation)
-
-                # Get output path
-                output_path = self._get_output_path(jpeg_path)
-
-                # Apply rotation
-                was_rotated = self._apply_rotation(jpeg_path, output_path, degrees)
-
-                # Update stats
-                stats["corrections_by_angle"][degrees] += 1
-                if was_rotated:
-                    stats["corrected"] += 1
-                else:
-                    stats["skipped"] += 1
-
-            except Exception as e:
-                logger.error(f"Error processing {jpeg_path}: {e}")
-                stats["errors"] += 1
+        # Aggregate results
+        for result in results:
+            if result:
+                stats["corrected"] += result["corrected"]
+                stats["skipped"] += result["skipped"]
+                stats["errors"] += result["errors"]
+                for angle, count in result["corrections_by_angle"].items():
+                    stats["corrections_by_angle"][angle] += count
 
         return stats
+
+    def _process_image_task(self, task: tuple[str, str, Path]) -> dict[str, Any]:
+        """
+        Process a single image rotation task.
+
+        Args:
+            task: Tuple of (image_id, rotation, jpeg_path)
+
+        Returns:
+            Statistics for this image
+        """
+        image_id, rotation, jpeg_path = task
+        result: dict[str, Any] = {
+            "corrected": 0,
+            "skipped": 0,
+            "errors": 0,
+            "corrections_by_angle": {0: 0, 90: 0, 180: 0, 270: 0},
+        }
+
+        try:
+            # Convert rotation to degrees
+            degrees = self._rotation_to_degrees(rotation)
+
+            # Get output path
+            output_path = self._get_output_path(jpeg_path)
+
+            # Apply rotation
+            was_rotated = self._apply_rotation(jpeg_path, output_path, degrees)
+
+            # Update stats
+            result["corrections_by_angle"][degrees] += 1
+            if was_rotated:
+                result["corrected"] += 1
+            else:
+                result["skipped"] += 1
+
+        except Exception as e:
+            logger.error(f"Error processing {jpeg_path}: {e}")
+            result["errors"] += 1
+
+        return result
 
 
 def correct_rotations_v3(input_dir: str, output_dir: Optional[str] = None, overwrite: bool = False):

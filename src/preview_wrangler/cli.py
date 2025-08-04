@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from .cache import CacheManager
+from .capture_time_sorter import capture_time_sort
 from .csv_parser import PreviewDirectory
 from .file_downloader import FileDownloader
 from .marker_scanner import MarkerScanner
@@ -68,15 +69,20 @@ def cli(ctx, debug):
     "--max-projects",
     type=int,
     default=4,
-    help="Maximum number of projects to download concurrently",
+    help="Maximum number of projects to download concurrently (parallel processing)",
+)
+@click.option(
+    "--max-images",
+    type=int,
+    help="Maximum number of images to download per project (default: all)",
 )
 @click.option(
     "--limit",
     type=int,
-    help="Limit the total number of projects to download",
+    help="Limit the total number of projects to download (0 = no limit)",
 )
 @click.pass_context
-def download(ctx, output_dir, hours_back, max_projects, limit):
+def download(ctx, output_dir, hours_back, max_projects, max_images, limit):
     """Download preview files using marker files."""
     cache_manager = ctx.obj["cache_manager"]
     s3_client = ctx.obj["s3_client"]
@@ -118,7 +124,13 @@ def download(ctx, output_dir, hours_back, max_projects, limit):
 
         # Step 3: Download preview files
         click.echo(f"\nDownloading preview files to {output_dir}...")
-        file_downloader = FileDownloader(s3_client, cache_manager, output_dir, max_projects)
+        file_downloader = FileDownloader(
+            s3_client=s3_client,
+            cache_manager=cache_manager,
+            output_dir=output_dir,
+            max_project_workers=max_projects,
+            max_images=max_images,
+        )
         file_downloader.download_preview_files(preview_dirs)
 
         click.echo("\nDownload complete!")
@@ -191,6 +203,38 @@ def correct_rotations_cmd(input_dir, output_dir, overwrite):
 
     except Exception as e:
         logger.exception("Error during rotation correction")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--input-dir",
+    "-i",
+    type=click.Path(exists=True, path_type=Path),
+    default="output",
+    help="Input directory containing project directories with images and v3.gz files",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    type=click.Path(path_type=Path),
+    help="Output directory for renamed images (default: in-place)",
+)
+@click.option("--overwrite", is_flag=True, help="Overwrite existing renamed images")
+def capture_time_sort_cmd(input_dir, output_dir, overwrite):
+    """Sort/rename images by capture time using data from project v3.gz files."""
+    try:
+        click.echo(f"Processing projects in {input_dir}...")
+
+        capture_time_sort(
+            input_dir=str(input_dir),
+            output_dir=str(output_dir) if output_dir else None,
+            overwrite=overwrite,
+        )
+
+    except Exception as e:
+        logger.exception("Error during capture time sorting")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
