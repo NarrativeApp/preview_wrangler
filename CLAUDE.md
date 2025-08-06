@@ -45,6 +45,24 @@ uv run python src/main.py capture-time-sort --output-dir sorted_images
 # Force overwrite existing renamed images
 uv run python src/main.py capture-time-sort --overwrite
 
+# Clean up orphaned preview files (dry run by default, preserves ML upload files)
+uv run python src/main.py clean-orphans
+
+# Clean orphans with custom marker window (default: 7 days back)
+uv run python src/main.py clean-orphans --days-back 14
+
+# Clean orphans with specific date range
+uv run python src/main.py clean-orphans --date-from 2024-01-01 --date-to 2024-01-31
+
+# Clean orphans from specific start date to today
+uv run python src/main.py clean-orphans --date-from 2024-01-15
+
+# Generate a report of orphaned preview files
+uv run python src/main.py clean-orphans --report orphans_report.md
+
+# Actually delete orphaned preview files (after reviewing dry run)
+uv run python src/main.py clean-orphans --no-dry-run
+
 # Run tests
 uv run pytest
 
@@ -71,6 +89,17 @@ The project includes a capture time sorting feature that organizes images by ren
 - **Example**: `EOS_R6_182027002738_20250712_023256_9e8161ff-abb8-4332-bb8d-096ef9d37c68.jpg`
 - **Collision Avoidance**: Uses image UUID to ensure filename uniqueness
 - **Processing**: Sanitizes camera model names and formats timestamps for filesystem compatibility
+
+## Orphan Data Cleanup
+
+The project includes an orphan data cleanup feature that identifies and removes orphaned preview files while preserving ML upload files:
+
+- **Data Source**: Downloads latest S3 inventory CSV files and cross-references with marker files
+- **Detection**: Finds projects with preview data in inventory but no valid marker files within the specified time window
+- **Date Filtering**: Supports both relative (`--days-back`) and absolute (`--date-from`/`--date-to`) date ranges for precise control
+- **Selective Deletion**: Only deletes preview files (under `preview.v1/`) - ML upload files (`.v3.gz`) are preserved
+- **Safety**: Dry-run mode by default with detailed reporting, file counts by date/hour, and confirmation prompts
+- **Efficiency**: Uses cached inventory downloads, concurrent CSV processing, and batch deletion for S3 operations
 
 ## Performance & Parallelization
 
