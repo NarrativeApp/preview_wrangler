@@ -189,7 +189,9 @@ class OrphanCleaner:
 
         # Step 3: Find orphaned projects (in inventory but not in markers)
         orphaned_projects = all_inventory_projects - valid_projects
+        non_orphaned_projects = all_inventory_projects.intersection(valid_projects)
         logger.info(f"Found {len(orphaned_projects)} orphaned projects")
+        logger.info(f"Found {len(non_orphaned_projects)} non-orphaned projects (have valid markers)")
 
         # Step 4: Collect all files from orphaned projects using concurrent processing
         orphaned_files, total_size = self._get_project_files_fast(

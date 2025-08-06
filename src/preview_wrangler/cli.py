@@ -335,7 +335,7 @@ def clean_orphans(ctx, date_from, date_to, days_back, dry_run, report, batch_siz
         )
 
         if not orphaned_files:
-            click.echo("No orphaned data found.")
+            click.echo("No orphaned data found. All projects have valid markers.")
             return
 
         # Calculate statistics
