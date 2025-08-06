@@ -13,6 +13,7 @@ from .capture_time_sorter import capture_time_sort
 from .csv_parser import PreviewDirectory
 from .file_downloader import FileDownloader
 from .marker_scanner import MarkerScanner
+from .orphan_cleaner import OrphanCleaner
 from .rotation_corrector_v3 import correct_rotations_v3
 from .s3_client import S3Client
 
@@ -235,6 +236,247 @@ def capture_time_sort_cmd(input_dir, output_dir, overwrite):
 
     except Exception as e:
         logger.exception("Error during capture time sorting")
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--date-from",
+    type=str,
+    help="Start date for valid marker files (YYYY-MM-DD format, e.g., 2024-01-01)",
+)
+@click.option(
+    "--date-to",
+    type=str,
+    help="End date for valid marker files (YYYY-MM-DD format, e.g., 2024-01-31). Defaults to today.",
+)
+@click.option(
+    "--days-back",
+    type=int,
+    default=7,
+    help="Number of days to look back for valid marker files (default: 7). Ignored if --date-from is specified.",
+)
+@click.option(
+    "--dry-run/--no-dry-run",
+    default=True,
+    help="Perform a dry run without actually deleting files (default: dry-run)",
+)
+@click.option(
+    "--report",
+    type=click.Path(path_type=Path),
+    help="Save a detailed report to this file",
+)
+@click.option(
+    "--batch-size",
+    type=int,
+    default=1000,
+    help="Number of files to delete in each batch",
+)
+@click.pass_context
+def clean_orphans(ctx, date_from, date_to, days_back, dry_run, report, batch_size):
+    """Find and delete orphaned PREVIEW files (preserves ML upload files).
+
+    This command scans for all preview data in the bucket and identifies projects
+    that don't have valid marker files created within the specified time window.
+    Only preview files (under preview.v1/) are deleted - ML upload files (.v3.gz) are preserved.
+    By default, it performs a dry run to show what would be deleted.
+    """
+    s3_client = ctx.obj["s3_client"]
+    cache_manager = ctx.obj["cache_manager"]
+
+    try:
+        cleaner = OrphanCleaner(s3_client, cache_manager)
+
+        # Parse date arguments
+        start_datetime = None
+        end_datetime = None
+
+        if date_from:
+            try:
+                from datetime import datetime, timezone
+
+                start_datetime = datetime.strptime(date_from, "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                click.echo(
+                    f"Error: Invalid date format for --date-from: {date_from}. Use YYYY-MM-DD format.",
+                    err=True,
+                )
+                sys.exit(1)
+
+        if date_to:
+            try:
+                from datetime import datetime, timezone
+
+                # Set to end of day (23:59:59)
+                end_datetime = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                    hour=23, minute=59, second=59, tzinfo=timezone.utc
+                )
+            except ValueError:
+                click.echo(
+                    f"Error: Invalid date format for --date-to: {date_to}. Use YYYY-MM-DD format.",
+                    err=True,
+                )
+                sys.exit(1)
+
+        # Display date range info
+        if start_datetime and end_datetime:
+            click.echo(f"Scanning for orphaned data (marker window: {date_from} to {date_to})...")
+        elif start_datetime:
+            click.echo(f"Scanning for orphaned data (marker window: from {date_from} to today)...")
+        else:
+            click.echo(f"Scanning for orphaned data (marker window: last {days_back} days)...")
+
+        # Find orphaned data (and optionally non-orphaned for analysis)
+        orphaned_files, total_size, non_orphaned_files = cleaner.find_orphaned_data(
+            days_back=days_back,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            return_non_orphaned=True,
+        )
+
+        if not orphaned_files:
+            click.echo("No orphaned data found. All projects have valid markers.")
+            return
+
+        # Calculate statistics
+        total_projects = len(orphaned_files)
+        total_files = sum(len(files) for files in orphaned_files.values())
+        total_size_gb = total_size / (1024**3)
+
+        # Collect all distinct date-hours with counts for orphaned files
+        orphaned_datetime_counts = {}
+        for files in orphaned_files.values():
+            for _, last_modified in files:
+                # Extract date and hour (first 13 characters: YYYY-MM-DDTHH)
+                if len(last_modified) >= 13:
+                    datetime_str = last_modified[:13]  # YYYY-MM-DDTHH
+                elif len(last_modified) >= 10:
+                    datetime_str = last_modified[:10]  # Just date if no time
+                else:
+                    datetime_str = last_modified
+
+                if datetime_str != "unknown":
+                    orphaned_datetime_counts[datetime_str] = (
+                        orphaned_datetime_counts.get(datetime_str, 0) + 1
+                    )
+
+        # Collect date-hours for non-orphaned files if available
+        non_orphaned_datetime_counts = {}
+        if non_orphaned_files:
+            for files in non_orphaned_files.values():
+                for _, last_modified in files:
+                    if len(last_modified) >= 13:
+                        datetime_str = last_modified[:13]
+                    elif len(last_modified) >= 10:
+                        datetime_str = last_modified[:10]
+                    else:
+                        datetime_str = last_modified
+
+                    if datetime_str != "unknown":
+                        non_orphaned_datetime_counts[datetime_str] = (
+                            non_orphaned_datetime_counts.get(datetime_str, 0) + 1
+                        )
+
+        click.echo(
+            f"\nFound {total_projects} orphaned projects with {total_files} total files ({total_size_gb:.2f} GB)"
+        )
+
+        # Show non-orphaned stats if available
+        if non_orphaned_files:
+            non_orphaned_projects = len(non_orphaned_files)
+            non_orphaned_file_count = sum(len(files) for files in non_orphaned_files.values())
+            click.echo(
+                f"Found {non_orphaned_projects} non-orphaned projects with {non_orphaned_file_count} total files"
+            )
+
+        # Show combined orphaned/non-orphaned file counts by date/hour
+        if orphaned_datetime_counts or non_orphaned_datetime_counts:
+            all_datetimes = sorted(
+                set(orphaned_datetime_counts.keys()) | set(non_orphaned_datetime_counts.keys())
+            )
+            click.echo(
+                f"\nFiles span {len(all_datetimes)} distinct date-hours from {all_datetimes[0]} to {all_datetimes[-1]}"
+            )
+
+            # Show all date-hours with both orphaned and non-orphaned counts
+            click.echo("File counts by date and hour (orphaned / non-orphaned):")
+            for datetime_str in all_datetimes:
+                orphaned_count = orphaned_datetime_counts.get(datetime_str, 0)
+                non_orphaned_count = non_orphaned_datetime_counts.get(datetime_str, 0)
+                click.echo(f"  {datetime_str}: {orphaned_count:6d} / {non_orphaned_count:6d} files")
+
+        # Generate report if requested
+        if report:
+            click.echo(f"\nGenerating report: {report}")
+            cleaner.generate_report(orphaned_files, output_file=report)
+
+        # Show sample of what would be deleted
+        if dry_run:
+            click.echo("\nDRY RUN MODE - No files will be deleted")
+            click.echo(f"Total that would be deleted: {total_files} files ({total_size_gb:.2f} GB)")
+            click.echo(f"Files will be deleted in batches of {batch_size}")
+
+            # Sort projects by their most recent file date to show most recent ones first
+            def get_most_recent_date(project_path):
+                files = orphaned_files[project_path]
+                if not files:
+                    return "0000-00-00"  # Fallback for empty projects
+                # Get the most recent datetime from all files in this project
+                datetimes = []
+                for _, last_modified in files:
+                    if len(last_modified) >= 13:
+                        datetimes.append(last_modified[:13])  # YYYY-MM-DDTHH
+                    elif len(last_modified) >= 10:
+                        datetimes.append(last_modified[:10])  # Just date
+                    else:
+                        datetimes.append("0000-00-00")
+                return max(datetimes) if datetimes else "0000-00-00"
+
+            projects_by_recency = sorted(
+                orphaned_files.keys(), key=get_most_recent_date, reverse=True
+            )
+
+            click.echo("\nSample of orphaned projects and files (most recent 5 projects):")
+            for _i, project_path in enumerate(projects_by_recency[:5]):
+                files = orphaned_files[project_path]
+                click.echo(f"  {project_path}: {len(files)} files")
+                # Show first 30 files as examples with dates and hours
+                for file_path, last_modified in files[:30]:
+                    # Format the datetime for better readability
+                    if len(last_modified) >= 13:
+                        datetime_str = last_modified[:13]  # YYYY-MM-DDTHH
+                    elif len(last_modified) >= 10:
+                        datetime_str = last_modified[:10]  # Just date
+                    else:
+                        datetime_str = last_modified
+                    click.echo(f"    - {file_path} (modified: {datetime_str})")
+                if len(files) > 30:
+                    click.echo(f"    ... and {len(files) - 30} more files")
+                click.echo("")
+
+            if total_projects > 5:
+                click.echo(f"  ... and {total_projects - 5} more projects")
+
+            click.echo("\nTo actually delete these files, run with --no-dry-run")
+        else:
+            # Confirm deletion
+            click.confirm(
+                f"\nWARNING: This will delete {total_files} files ({total_size_gb:.2f} GB) from {total_projects} projects. Continue?",
+                abort=True,
+            )
+
+            # Delete the files
+            projects_deleted, files_deleted = cleaner.delete_orphaned_data(
+                orphaned_files, dry_run=False, batch_size=batch_size
+            )
+
+            click.echo(f"\nDeleted {files_deleted} files from {projects_deleted} projects")
+
+    except Exception as e:
+        logger.exception("Error during orphan cleanup")
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 

@@ -1,16 +1,61 @@
 """Scanner for marker files created by ml-upload-lambda."""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+from tqdm import tqdm
 
 from .s3_client import S3Client
 
 logger = logging.getLogger(__name__)
 
 
+def _scan_single_path(args: tuple[str, str]) -> set[tuple[str, str]]:
+    """Scan a single S3 path for marker files.
+
+    Args:
+        args: Tuple of (bucket, path_prefix)
+
+    Returns:
+        Set of (user_id, project_id) tuples found in this path
+    """
+    import boto3
+
+    bucket, path_prefix = args
+    projects = set()
+
+    try:
+        # Create a new S3 client for this thread (uses default credentials)
+        s3 = boto3.client("s3")
+
+        # List all objects under this path
+        paginator = s3.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=bucket, Prefix=path_prefix)
+
+        for page in pages:
+            if "Contents" in page:
+                for obj in page["Contents"]:
+                    key = obj["Key"]
+                    # Extract user_id and project_id from marker file path
+                    # Format: prefix/YYYY/MM/DD/HH/user_id/project_id
+                    parts = key.split("/")
+                    if len(parts) >= 7:  # Ensure valid path structure
+                        user_id = parts[5]
+                        project_id = parts[6]
+                        projects.add((user_id, project_id))
+
+    except Exception as e:
+        logger.warning(f"Error scanning path {path_prefix}: {e}")
+
+    return projects
+
+
 class MarkerScanner:
     """Scans for marker files to identify projects with both preview.v1 and v3.gz data."""
+
+    MAX_WORKERS = 20  # Scan multiple hour paths concurrently
 
     def __init__(self, s3_client: S3Client):
         self.s3_client = s3_client
@@ -63,7 +108,7 @@ class MarkerScanner:
         self, prefix: str, start_datetime: datetime, end_datetime: datetime
     ) -> set[tuple[str, str]]:
         """
-        Scan a specific marker prefix for user/project pairs.
+        Scan a specific marker prefix for user/project pairs using concurrent processing.
 
         Args:
             prefix: Either "preview.v1" or "v3"
@@ -73,39 +118,45 @@ class MarkerScanner:
         Returns:
             Set of (user_id, project_id) tuples
         """
-        projects = set()
-
-        # Generate datetime paths to scan
+        # Generate all datetime paths to scan
+        paths_to_scan = []
         current = start_datetime
         while current <= end_datetime:
             datetime_path = current.strftime("%Y/%m/%d/%H")
             path_prefix = f"{prefix}/{datetime_path}/"
-
-            logger.info(f"Scanning path: {path_prefix}")
-
-            try:
-                # List all objects under this hour path directly
-                paginator = self.s3_client.s3.get_paginator("list_objects_v2")
-                pages = paginator.paginate(Bucket=self.bucket, Prefix=path_prefix)
-
-                for page in pages:
-                    if "Contents" in page:
-                        for obj in page["Contents"]:
-                            key = obj["Key"]
-                            # Extract user_id and project_id from marker file path
-                            # Format: prefix/YYYY/MM/DD/HH/user_id/project_id
-                            parts = key.split("/")
-                            if len(parts) >= 7:  # Ensure valid path structure
-                                user_id = parts[5]
-                                project_id = parts[6]
-                                projects.add((user_id, project_id))
-
-            except Exception as e:
-                logger.warning(f"Error scanning path {path_prefix}: {e}")
-
+            paths_to_scan.append(path_prefix)
             current += timedelta(hours=1)
 
-        return projects
+        logger.info(
+            f"Scanning {len(paths_to_scan)} paths for {prefix} markers using {self.MAX_WORKERS} workers"
+        )
+
+        # Prepare arguments for concurrent execution
+        scan_args = [(self.bucket, path_prefix) for path_prefix in paths_to_scan]
+
+        all_projects = set()
+
+        # Use ThreadPoolExecutor for I/O bound S3 operations
+        with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as executor:
+            # Submit all scanning tasks
+            future_to_path = {
+                executor.submit(_scan_single_path, args): args[1] for args in scan_args
+            }
+
+            # Process results as they complete
+            with tqdm(total=len(paths_to_scan), desc=f"Scanning {prefix}") as pbar:
+                for future in as_completed(future_to_path):
+                    path_prefix = future_to_path[future]
+                    try:
+                        projects = future.result()
+                        all_projects.update(projects)
+                        logger.debug(f"Scanned {path_prefix}: found {len(projects)} projects")
+                    except Exception as e:
+                        logger.error(f"Failed to scan {path_prefix}: {e}")
+                    finally:
+                        pbar.update(1)
+
+        return all_projects
 
     def get_project_files(self, user_id: str, project_id: str) -> dict[str, str | list[str]]:
         """
