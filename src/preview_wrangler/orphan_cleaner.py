@@ -69,7 +69,7 @@ def _process_csv_for_all_projects(
         Dictionary mapping project paths to lists of (file_path, file_size, last_modified) tuples found in this CSV
     """
     csv_path, orphaned_projects_set, start_datetime, end_datetime = args
-    project_files = {}
+    project_files: dict[str, list[tuple[str, int, str]]] = {}
 
     try:
         with open(csv_path, encoding="utf-8") as f:
@@ -279,7 +279,7 @@ class OrphanCleaner:
                 f"Collecting PREVIEW files for {len(orphaned_projects)} projects from {len(csv_paths)} CSV files (optimized single-pass)..."
             )
 
-        all_project_files = {}
+        all_project_files: dict[str, list[tuple[str, str]]] = {}
         total_size = 0
 
         # Process each CSV once to collect files for ALL orphaned projects

@@ -415,7 +415,7 @@ def clean_orphans(ctx, date_from, date_to, days_back, dry_run, report, batch_siz
 
         # Show sample of what would be deleted
         if dry_run:
-            click.echo(f"\nDRY RUN MODE - No files will be deleted")
+            click.echo("\nDRY RUN MODE - No files will be deleted")
             click.echo(f"Total that would be deleted: {total_files} files ({total_size_gb:.2f} GB)")
             click.echo(f"Files will be deleted in batches of {batch_size}")
 
