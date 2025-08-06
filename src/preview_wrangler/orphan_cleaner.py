@@ -333,23 +333,36 @@ class OrphanCleaner:
         logger.info(f"Deleting {total_files} files from {total_projects} projects...")
 
         files_deleted = 0
-        projects_deleted = 0
+        projects_deleted = len(orphaned_files)
 
-        for project_path, files in tqdm(orphaned_files.items(), desc="Deleting projects"):
+        # Collect all preview files from all projects into a single list
+        all_preview_files = []
+        total_filtered = 0
+
+        for project_path, files in orphaned_files.items():
             # Safety check: only delete preview files - extract file paths from tuples
             preview_files = [
                 file_path
                 for file_path, _ in files
                 if "/preview.v1/" in file_path and not file_path.endswith(".v3.gz")
             ]
-            if len(preview_files) != len(files):
-                logger.warning(
-                    f"Filtered out {len(files) - len(preview_files)} non-preview files from {project_path}"
-                )
 
-            # Delete files in batches
-            for i in range(0, len(preview_files), batch_size):
-                batch = preview_files[i : i + batch_size]
+            filtered_count = len(files) - len(preview_files)
+            if filtered_count > 0:
+                total_filtered += filtered_count
+                logger.debug(f"Filtered out {filtered_count} non-preview files from {project_path}")
+
+            all_preview_files.extend(preview_files)
+
+        if total_filtered > 0:
+            logger.warning(f"Filtered out {total_filtered} non-preview files total")
+
+        logger.info(f"Deleting {len(all_preview_files)} files in batches of {batch_size}...")
+
+        # Delete all files in batches across all projects (much more efficient)
+        with tqdm(total=len(all_preview_files), desc="Deleting files", unit="files") as pbar:
+            for i in range(0, len(all_preview_files), batch_size):
+                batch = all_preview_files[i : i + batch_size]
                 delete_objects = [{"Key": key} for key in batch]
 
                 try:
@@ -363,13 +376,17 @@ class OrphanCleaner:
                             logger.error(
                                 f"Error deleting {error['Key']}: {error['Code']} - {error['Message']}"
                             )
+                        # Count successful deletes (total - errors)
+                        successful_deletes = len(batch) - len(response["Errors"])
                     else:
-                        files_deleted += len(batch)
+                        successful_deletes = len(batch)
+
+                    files_deleted += successful_deletes
+                    pbar.update(len(batch))
 
                 except Exception as e:
-                    logger.error(f"Error deleting batch for {project_path}: {e}")
-
-            projects_deleted += 1
+                    logger.error(f"Error deleting batch starting at index {i}: {e}")
+                    pbar.update(len(batch))
 
         logger.info(f"Deleted {files_deleted} files from {projects_deleted} projects")
         return projects_deleted, files_deleted
