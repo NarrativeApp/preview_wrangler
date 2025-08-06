@@ -329,9 +329,12 @@ def clean_orphans(ctx, date_from, date_to, days_back, dry_run, report, batch_siz
         else:
             click.echo(f"Scanning for orphaned data (marker window: last {days_back} days)...")
 
-        # Find orphaned data
-        orphaned_files, total_size = cleaner.find_orphaned_data(
-            days_back=days_back, start_datetime=start_datetime, end_datetime=end_datetime
+        # Find orphaned data (and optionally non-orphaned for analysis)
+        orphaned_files, total_size, non_orphaned_files = cleaner.find_orphaned_data(
+            days_back=days_back,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            return_non_orphaned=True,
         )
 
         if not orphaned_files:
@@ -343,8 +346,8 @@ def clean_orphans(ctx, date_from, date_to, days_back, dry_run, report, batch_siz
         total_files = sum(len(files) for files in orphaned_files.values())
         total_size_gb = total_size / (1024**3)
 
-        # Collect all distinct date-hours with counts
-        datetime_counts = {}
+        # Collect all distinct date-hours with counts for orphaned files
+        orphaned_datetime_counts = {}
         for files in orphaned_files.values():
             for _, last_modified in files:
                 # Extract date and hour (first 13 characters: YYYY-MM-DDTHH)
@@ -356,22 +359,54 @@ def clean_orphans(ctx, date_from, date_to, days_back, dry_run, report, batch_siz
                     datetime_str = last_modified
 
                 if datetime_str != "unknown":
-                    datetime_counts[datetime_str] = datetime_counts.get(datetime_str, 0) + 1
+                    orphaned_datetime_counts[datetime_str] = (
+                        orphaned_datetime_counts.get(datetime_str, 0) + 1
+                    )
+
+        # Collect date-hours for non-orphaned files if available
+        non_orphaned_datetime_counts = {}
+        if non_orphaned_files:
+            for files in non_orphaned_files.values():
+                for _, last_modified in files:
+                    if len(last_modified) >= 13:
+                        datetime_str = last_modified[:13]
+                    elif len(last_modified) >= 10:
+                        datetime_str = last_modified[:10]
+                    else:
+                        datetime_str = last_modified
+
+                    if datetime_str != "unknown":
+                        non_orphaned_datetime_counts[datetime_str] = (
+                            non_orphaned_datetime_counts.get(datetime_str, 0) + 1
+                        )
 
         click.echo(
             f"\nFound {total_projects} orphaned projects with {total_files} total files ({total_size_gb:.2f} GB)"
         )
 
-        if datetime_counts:
-            sorted_datetimes = sorted(datetime_counts.keys())
+        # Show non-orphaned stats if available
+        if non_orphaned_files:
+            non_orphaned_projects = len(non_orphaned_files)
+            non_orphaned_file_count = sum(len(files) for files in non_orphaned_files.values())
             click.echo(
-                f"Files span {len(sorted_datetimes)} distinct date-hours from {sorted_datetimes[0]} to {sorted_datetimes[-1]}"
+                f"Found {non_orphaned_projects} non-orphaned projects with {non_orphaned_file_count} total files"
             )
 
-            # Show all date-hours with counts
-            click.echo("File counts by date and hour:")
-            for datetime_str in sorted_datetimes:
-                click.echo(f"  {datetime_str}: {datetime_counts[datetime_str]} files")
+        # Show combined orphaned/non-orphaned file counts by date/hour
+        if orphaned_datetime_counts or non_orphaned_datetime_counts:
+            all_datetimes = sorted(
+                set(orphaned_datetime_counts.keys()) | set(non_orphaned_datetime_counts.keys())
+            )
+            click.echo(
+                f"\nFiles span {len(all_datetimes)} distinct date-hours from {all_datetimes[0]} to {all_datetimes[-1]}"
+            )
+
+            # Show all date-hours with both orphaned and non-orphaned counts
+            click.echo("File counts by date and hour (orphaned / non-orphaned):")
+            for datetime_str in all_datetimes:
+                orphaned_count = orphaned_datetime_counts.get(datetime_str, 0)
+                non_orphaned_count = non_orphaned_datetime_counts.get(datetime_str, 0)
+                click.echo(f"  {datetime_str}: {orphaned_count:6d} / {non_orphaned_count:6d} files")
 
         # Generate report if requested
         if report:

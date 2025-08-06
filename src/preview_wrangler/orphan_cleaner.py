@@ -140,7 +140,8 @@ class OrphanCleaner:
         days_back: int = 7,  # Default to 7 days
         start_datetime: Optional[datetime] = None,
         end_datetime: Optional[datetime] = None,
-    ) -> tuple[dict[str, list[tuple[str, str]]], int]:
+        return_non_orphaned: bool = False,
+    ) -> tuple[dict[str, list[tuple[str, str]]], int, Optional[dict[str, list[tuple[str, str]]]]]:
         """
         Find all preview data in inventory that doesn't have corresponding marker files.
 
@@ -148,11 +149,13 @@ class OrphanCleaner:
             days_back: How many days back to scan for valid markers (default: 7)
             start_datetime: Optional start datetime (overrides days_back)
             end_datetime: Optional end datetime (defaults to now)
+            return_non_orphaned: If True, also return non-orphaned files for analysis
 
         Returns:
-            Tuple of (orphaned_files_dict, total_size_bytes)
+            Tuple of (orphaned_files_dict, total_size_bytes, non_orphaned_files_dict)
             - orphaned_files_dict: Dictionary mapping project paths to lists of (file_path, last_modified) tuples
             - total_size_bytes: Total size of all orphaned files
+            - non_orphaned_files_dict: Optional dictionary of non-orphaned files (if return_non_orphaned=True)
         """
         if end_datetime is None:
             end_datetime = datetime.now(timezone.utc)
@@ -191,14 +194,23 @@ class OrphanCleaner:
         orphaned_projects = all_inventory_projects - valid_projects
         non_orphaned_projects = all_inventory_projects.intersection(valid_projects)
         logger.info(f"Found {len(orphaned_projects)} orphaned projects")
-        logger.info(f"Found {len(non_orphaned_projects)} non-orphaned projects (have valid markers)")
+        logger.info(
+            f"Found {len(non_orphaned_projects)} non-orphaned projects (have valid markers)"
+        )
 
         # Step 4: Collect all files from orphaned projects using concurrent processing
-        orphaned_files, total_size = self._get_project_files_fast(
+        orphaned_files, orphaned_size = self._get_project_files_fast(
             list(orphaned_projects), csv_paths, start_datetime, end_datetime
         )
 
-        return orphaned_files, total_size
+        # Step 5: Optionally collect non-orphaned files for analysis
+        non_orphaned_files = None
+        if return_non_orphaned and non_orphaned_projects:
+            non_orphaned_files, _ = self._get_project_files_fast(
+                list(non_orphaned_projects), csv_paths, start_datetime, end_datetime
+            )
+
+        return orphaned_files, orphaned_size, non_orphaned_files
 
     def _parse_csv_files_fast(self, csv_paths: list[Path]) -> set[tuple[str, str]]:
         """Parse CSV files to find all preview projects using concurrent processing.
